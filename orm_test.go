@@ -1,10 +1,13 @@
 package om
 
-import "testing"
+import (
+	"testing"
+	"reflect"
+)
 
 func TestGetColumns(t *testing.T)  {
 	type Email struct {
-		Value string `db:"email,option"`
+		Value string `db:"goto,option"`
 	}
 	type Author struct {
 		M
@@ -19,9 +22,6 @@ func TestGetColumns(t *testing.T)  {
 	if len(cols) != 3 {
 		t.Errorf("expect 3 columns got:%d", len(cols))
 	}
-	if cols[2] != "email" {
-		t.Errorf("expect #2 is email, got:%s", cols[2])
-	}
 
 	var authors []Author
 	tp, err := extractModelType(&authors)
@@ -31,5 +31,20 @@ func TestGetColumns(t *testing.T)  {
 	t.Logf("tp:%+v", tp)
 	cols = getColumns(tp)
 	t.Logf("cols:%v", cols)
+
+	v := modelsMapper.FieldByName(reflect.ValueOf(&author), "goto")
+	t.Logf("v:%+v", v)
+}
+
+func TestParseSliceIn(t *testing.T) {
+	q := "insert into t (a,b) values(?,?)"
+	//args := []interface{}{[]string{"abc", "efg"}}
+	args := []interface{}{"abc", "efg"}
+
+	err := parseINSpec(&q, &args)
+	if err != nil {
+		t.Errorf("err:%v", err)
+	}
+	t.Logf("q:%s, args:%v", q, args)
 }
 

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"reflect"
 	"fmt"
+	"database/sql"
 )
 
 const (
@@ -17,6 +18,50 @@ var (
 		return strings.ToLower(s)
 	})
 )
+
+type Manager struct {
+	v          reflect.Value
+	tp         reflect.Type
+	model      isModel
+	colInfoMap map[string]*reflectx.FieldInfo
+	fieldMap map[string]reflect.Value
+	tpMap      *reflectx.StructMap
+}
+
+func newManager(model isModel) (*Manager, error)  {
+	v := reflect.Indirect(reflect.ValueOf(model))
+	tp := v.Type()
+	tpMap := modelsMapper.TypeMap(tp)
+	var colsMap = map[string] *reflectx.FieldInfo {}
+	for name, info := range tpMap.Names {
+		_, ok := info.Field.Tag.Lookup(tag)
+		if ok {
+			colsMap[name] = info
+		}
+	}
+	m := &Manager{
+		model:model,
+		colInfoMap:colsMap,
+		tpMap:tpMap,
+		fieldMap:modelsMapper.FieldMap(v),
+		v:v,
+		tp:tp,
+	}
+	return m, nil
+}
+
+func (m *Manager) ColsMap() map[string]interface{} {
+	var colsMap = map[string] interface{}{}
+	for col, _ := range m.colInfoMap {
+		colsMap[col] = m.fieldMap[col].Interface()
+	}
+	return colsMap
+}
+
+// Bind try to set model status as bind
+func (m *Manager)Bind(id int64) {
+	// todo: bind id
+}
 
 // getColumns returns mapping column names of the model `m`
 func getColumns(tOrModel interface{}) (cols []string) {
@@ -52,6 +97,10 @@ type Query struct {
 func (q *Query) Where() {
 }
 
+type idHolder interface {
+	Identity() (colName string, value interface{})
+}
+
 type Model struct {
 }
 
@@ -78,27 +127,27 @@ type Donner interface {
 
 var _ Donner = &executor{}
 type executor struct {
-	isInsert bool
-	err error
-	tb *Tables
-	sql string
-	args []interface{}
+	callback func() (int64, error)
 }
 
-func (e *executor) Done() (int64, error) {
-	if e.err != nil {
-		return 0, e.err
-	}
-	r, err := e.tb.db.dbx.Exec(e.sql, e.args...)
-	if err != nil {
-		e.err = err
-		return 0, e.err
-	}
-	if e.isInsert {
-		return r.LastInsertId()
-	}
-	return r.RowsAffected()
+func (e *executor) Done() (int64, error)  {
+	return e.callback()
 }
+
+//func (e *executor) Done() (int64, error) {
+//	if e.err != nil {
+//		return 0, e.err
+//	}
+//	r, err := e.tb.db.dbx.Exec(e.sql, e.args...)
+//	if err != nil {
+//		e.err = err
+//		return 0, e.err
+//	}
+//	if e.isInsert {
+//		return r.LastInsertId()
+//	}
+//	return r.RowsAffected()
+//}
 
 type IsQueryResult interface {
 	Get(m isModel) error
@@ -157,33 +206,62 @@ func (qr *queryResult)Get(m isModel) error  {
 	return qr.err
 }
 
+type wrappedDB struct {
+	DB *sqlx.DB
+}
+
+//func (w *wrappedDB) Query(query string, args...interface{}) (*sql.Rows, error) {
+//	err := parseSliceArg(&query, &args)
+//	if err != nil {
+//		return nil, err
+//	}
+//	fmt.Printf("[SQL-Query]%s, --args:%+v\n",query, args)
+//	return w.DB.Query(query, args...)
+//}
+
+func (w *wrappedDB) Queryx(query string, args...interface{}) (*sqlx.Rows, error) {
+	err := parseINSpec(&query, &args)
+	if err != nil {
+		return nil, err
+	}
+	fmt.Printf("[Queryx]%s, --args:%+v\n",query, args)
+	return w.DB.Queryx(query, args...)
+}
+
+func (w *wrappedDB) Get(dest interface{}, query string, args ...interface{}) error {
+	err := parseINSpec(&query, &args)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("[Get]%s, --args:%+v\n",query, args)
+	return w.DB.Get(dest, query, args...)
+}
+
+func (w *wrappedDB) Select(dest interface{}, query string, args ...interface{}) error {
+	err := parseINSpec(&query, &args)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("[Select]%s, --args:%+v\n",query, args)
+	return w.DB.Select(dest, query, args...)
+}
+
+func (w *wrappedDB) Exec(query string, args...interface{}) (sql.Result, error) {
+	err := parseINSpec(&query, &args)
+	if err != nil {
+		return nil, err
+	}
+	fmt.Printf("[Exec]%s, --args:%+v\n",query, args)
+	return w.DB.Exec(query, args...)
+}
 
 type DB struct {
-	dbx *sqlx.DB
+	dbx *wrappedDB
 }
 
 func NewDB(db *sqlx.DB) *DB {
-	return &DB{db}
-}
-
-func (d *DB) Query(sql string, args...interface{}) IsQueryResult {
-	return &queryResult{
-		db:d,
-		query:sql,
-		args:args,
-	}
-}
-
-func (d *DB) Exec(sql string, args...interface{}) Donner {
-	return nil
-}
-
-func (m *DB) Begin() *DB {
-	return nil
-}
-
-func (m *DB) Commit() error {
-	return nil
+	w := &wrappedDB{db}
+	return &DB{w}
 }
 
 func (m *DB) Tb(table string, alias ...string) *Tables {

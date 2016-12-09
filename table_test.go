@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/go-sql-driver/mysql"
+	"database/sql"
 )
 
 func init()  {
@@ -86,14 +87,14 @@ func ConnectAll()  {
 	}
 }
 
-func TestTables_Insert(t *testing.T) {
+func TestTables_InsertMap(t *testing.T) {
 	RunWithScheme(test_scheme, t, func(sb *sqlx.DB, t *testing.T){
 		db := NewDB(sb)
-		id, err := db.Tb(t_book).Insert(map[string]interface{}{"name": "Python"}).Done()
+		id, err := db.Tb(t_book).InsertMap(map[string]interface{}{"name": "Python"}).Done()
 		if err != nil {
 			t.Errorf("got err:%v", err)
 		}
-		id, err = db.Tb(t_book).Insert(map[string]interface{}{"name": "Python"}).Done()
+		id, err = db.Tb(t_book).InsertMap(map[string]interface{}{"name": "Python"}).Done()
 		if err != nil {
 			t.Errorf("got err:%v", err)
 		}
@@ -103,3 +104,185 @@ func TestTables_Insert(t *testing.T) {
 	})
 }
 
+func TestTables_Insert(t *testing.T) {
+	RunWithScheme(test_scheme, t, func(sb *sqlx.DB, t *testing.T){
+		db := NewDB(sb)
+		type Book struct {
+			M
+			id int64
+			Name string `db:"name"`
+			Tag int `db:"tag"`
+		}
+		book := Book{
+			Name:"Golang",
+			Tag:1,
+		}
+		id, err := db.Tb(t_book).Insert(&book).Done()
+		if id != 1 {
+			t.Errorf("expect insert last id as 1, got:%d", id)
+		}
+		if err != nil {
+			t.Errorf("got err:%v", err)
+		}
+	})
+}
+
+func TestSelect_All(t *testing.T) {
+	RunWithScheme(test_scheme, t, func(sb *sqlx.DB, t *testing.T){
+		db := NewDB(sb)
+		type Book struct {
+			M
+			id int64
+			Name string `db:"name"`
+			Tag int `db:"tag"`
+		}
+		set := []*Book{
+			&Book{Name:"Python", Tag:99},
+			&Book{Name:"Golang", Tag:99},
+			&Book{Name:"Tencent", Tag:88},
+		}
+		for _, book:=range set {
+			_, err := db.Tb(t_book).Insert(book).Done()
+			if err != nil {
+				t.Errorf("fail to insert, err:%v", err)
+			}
+		}
+		var books []Book
+		// scan from given columns
+		err := db.Tb(t_book).Select("name").Where("tag = ?", 99).OrderDesc("name").All(&books)
+		if err != nil {
+			t.Errorf("fail to query all, err:%v", err)
+		}
+		if len(books) != 2 {
+			t.Errorf("expect 2, got:%d", len(books))
+		}
+		if books[0].Name != "Python" {
+			t.Errorf("expect got Python, got:%s", books[0].Name)
+		}
+		if books[0].Tag != 0 {
+			t.Errorf("expect no tag value, but got :%d", books[0].Tag)
+		}
+
+		books = nil
+		// scan from given columns
+		err = db.Tb(t_book).Select("tag", "name").Where("tag = ?", 99).OrderDesc("name").All(&books)
+		if err != nil {
+			t.Errorf("fail to query all, err:%v", err)
+		}
+		if len(books) != 2 {
+			t.Errorf("expect 2, got:%d", len(books))
+		}
+		if books[0].Name != "Python" {
+			t.Errorf("expect got Python, got:%s", books[0].Name)
+		}
+		if books[0].Tag != 99 {
+			t.Errorf("expect tag value 99, but got :%d", books[0].Tag)
+		}
+
+		books = nil
+		// scan from columns defined in the model struct
+		err = db.Tb(t_book).Select().Where("tag = ?", 99).OrderDesc("name").All(&books)
+		if err != nil {
+			t.Errorf("fail to query all, err:%v", err)
+		}
+		if len(books) != 2 {
+			t.Errorf("expect 2, got:%d", len(books))
+		}
+		if books[0].Name != "Python" {
+			t.Errorf("expect got Python, got:%s", books[0].Name)
+		}
+		if books[0].Tag != 99 {
+			t.Errorf("expect tag value 99, but got :%d", books[0].Tag)
+		}
+	})
+}
+
+func TestSelect_Get(t *testing.T) {
+	RunWithScheme(test_scheme, t, func(sb *sqlx.DB, t *testing.T){
+		db := NewDB(sb)
+
+		type Book struct {
+			M
+			id int64
+			Name string `db:"name"`
+			Tag int `db:"tag"`
+		}
+		set := []*Book{
+			&Book{Name:"Python", Tag:99},
+			&Book{Name:"Golang", Tag:99},
+			&Book{Name:"Tencent", Tag:88},
+		}
+		for _, book:=range set {
+			_, err := db.Tb(t_book).Insert(book).Done()
+			if err != nil {
+				t.Errorf("fail to insert, err:%v", err)
+			}
+		}
+		var book Book
+		// get exist
+		err := db.Tb(t_book).Select().Where("tag = ?", 99).OrderDesc("name").Get(&book)
+		if err != nil {
+			t.Errorf("fail to query all, err:%v", err)
+		}
+		if book.Name != "Python" {
+			t.Errorf("expect got Python, got:%s", book.Name)
+		}
+		if book.Tag != 99 {
+			t.Errorf("expect tag value 99, but got :%d", book.Tag)
+		}
+
+		// get no exists, should got ErrNoRows
+		err = db.Tb(t_book).Select().Where("tag = ?", 199).OrderDesc("name").Get(&book)
+		if err != sql.ErrNoRows {
+			t.Errorf("expect no rows err, got %v", err)
+		}
+
+		err = db.Tb(t_book).Select().Where("name IN (?)", "Python").OrderDesc("name").Get(&book)
+		if err != nil {
+			t.Errorf("expect no err, got %v", err)
+		}
+	})
+}
+
+type tBook struct {
+	M
+	Id int64
+	Name string `db:"name"`
+	Tag int `db:"tag"`
+}
+
+func (t *tBook) Identity() (string, interface{}) {
+	return "name", t.Name
+}
+
+func TestDeferWhere(t *testing.T) {
+	RunWithScheme(test_scheme, t, func(sb *sqlx.DB, t *testing.T){
+		db := NewDB(sb)
+		set := []*tBook{
+			&tBook{Name:"Python", Tag:99},
+			&tBook{Name:"Golang", Tag:99},
+			&tBook{Name:"Tencent", Tag:88},
+		}
+		for _, book:=range set {
+			_, err := db.Tb(t_book).Insert(book).Done()
+			if err != nil {
+				t.Errorf("fail to insert, err:%v", err)
+			}
+		}
+		cnt, err := db.Tb(t_book).Delete().Where("name = ?", "Python").Done()
+		if err != nil {
+			t.Errorf("got err:%v", err)
+		}
+		if cnt != 1 {
+			t.Errorf("expect delete 1 row, got :%d", cnt)
+		}
+
+		cnt, err = db.Tb(t_book).Delete(set[1]).Done()
+		if err != nil {
+			t.Errorf("got err:%v", err)
+		}
+		if cnt != 1 {
+			t.Errorf("expect delete 1 row, got :%d", cnt)
+		}
+	})
+}
