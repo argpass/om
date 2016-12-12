@@ -36,34 +36,48 @@ var TestMysql = true
 var mysqlDB *sqlx.DB
 
 type Scheme struct {
-	create string
+	create []string
 	drop string
 }
 
-func (p Scheme) Mysql() (string, string) {
+func (p Scheme) Mysql() ([]string, string) {
 	return p.create, p.drop
 }
 
-var t_book = "dbutils_t_book"
+var t_book = "test_book"
+var t_author = "test_author"
 
 var test_scheme = Scheme{
-	create:
-	`CREATE TABLE dbutils_t_book(id INTEGER AUTO_INCREMENT PRIMARY KEY,name VARCHAR(100) NOT NULL,
-	tag TINYINT NULL, deleted BOOLEAN DEFAULT FALSE)`,
-	drop:"drop table dbutils_t_book",
+	create: []string{
+		`
+	CREATE TABLE test_book(
+	  id INTEGER AUTO_INCREMENT PRIMARY KEY,
+	  name VARCHAR(100) NOT NULL,
+	  tag TINYINT NULL,
+	  deleted BOOLEAN DEFAULT FALSE,
+	  author_id INT NULL
+	);`,`
+	CREATE TABLE test_author(
+	  id INTEGER AUTO_INCREMENT PRIMARY KEY,
+	  name VARCHAR(100) NOT NULL,
+	  age INT NULL,
+	  deleted BOOLEAN DEFAULT FALSE);`},
+	drop:"drop table test_book, test_author; ",
 }
 
 type testFunc func(db *sqlx.DB, t *testing.T)
 
 func RunWithScheme(scheme Scheme, t *testing.T, testFn testFunc)  {
-	runner := func(db *sqlx.DB, create string, drop string){
+	runner := func(db *sqlx.DB, create []string, drop string){
 		// drop tables
 		defer func(){
 			db.MustExec(drop)
 			db.Close()
 		}()
 		// prepare environment
-		db.MustExec(create)
+		for _, query := range create {
+			db.MustExec(query)
+		}
 		// run test function
 		testFn(mysqlDB, t)
 	}
@@ -135,16 +149,17 @@ func TestSelect_All(t *testing.T) {
 			id int64
 			Name string `db:"name"`
 			Tag int `db:"tag"`
+			AuthorID int `db:"author_id"`
 		}
-		set := []*Book{
-			&Book{Name:"Python", Tag:99},
-			&Book{Name:"Golang", Tag:99},
-			&Book{Name:"Tencent", Tag:88},
+		book_set := []*Book{
+			&Book{Name:"Python", Tag:99, AuthorID:1},
+			&Book{Name:"Golang", Tag:99, AuthorID:2},
+			&Book{Name:"Tencent", Tag:88, AuthorID:1},
 		}
-		for _, book:=range set {
+		for _, book:=range book_set {
 			_, err := db.Tb(t_book).Insert(book).Done()
 			if err != nil {
-				t.Errorf("fail to insert, err:%v", err)
+				t.Errorf("fail to insert books, err:%v", err)
 			}
 		}
 		var books []Book
@@ -255,7 +270,7 @@ func (t *tBook) Identity() (string, interface{}) {
 	return "name", t.Name
 }
 
-func TestDeferWhere(t *testing.T) {
+func TestDeleteWhere(t *testing.T) {
 	RunWithScheme(test_scheme, t, func(sb *sqlx.DB, t *testing.T){
 		db := NewDB(sb)
 		set := []*tBook{
@@ -283,6 +298,135 @@ func TestDeferWhere(t *testing.T) {
 		}
 		if cnt != 1 {
 			t.Errorf("expect delete 1 row, got :%d", cnt)
+		}
+	})
+}
+
+func TestTables_UpdateMap(t *testing.T) {
+	RunWithScheme(test_scheme, t, func(sb *sqlx.DB, t *testing.T){
+		db := NewDB(sb)
+		set := []*tBook{
+			&tBook{Name:"Python", Tag:99},
+			&tBook{Name:"Golang", Tag:99},
+			&tBook{Name:"Tencent", Tag:88},
+		}
+		for _, book:=range set {
+			_, err := db.Tb(t_book).Insert(book).Done()
+			if err != nil {
+				t.Errorf("fail to insert, err:%v", err)
+			}
+		}
+		cnt, err := db.Tb(t_book).UpdateMap(map[string]interface{}{"name": "Python3.6"}).Where(
+			"name IN ?", []string{"Python"}).Done()
+		if err != nil {
+			t.Errorf("got err:%v", err)
+		}
+		if cnt != 1 {
+			t.Errorf("expect update 1 row, got :%d", cnt)
+		}
+
+		var b tBook
+		err = db.Tb(t_book).Select().Where("name = ?", "Python3.6").Get(&b)
+		if err != nil {
+			t.Errorf("got err:%v", err)
+		}
+		if b.Name != "Python3.6" {
+			t.Error("fail to update a book")
+		}
+	})
+}
+
+func TestTables_Update(t *testing.T) {
+	RunWithScheme(test_scheme, t, func(sb *sqlx.DB, t *testing.T){
+		db := NewDB(sb)
+		set := []*tBook{
+			&tBook{Name:"Python", Tag:99},
+			&tBook{Name:"Golang", Tag:99},
+			&tBook{Name:"Tencent", Tag:88},
+		}
+		for _, book:=range set {
+			_, err := db.Tb(t_book).Insert(book).Done()
+			if err != nil {
+				t.Errorf("fail to insert, err:%v", err)
+			}
+		}
+		set[0].Name = "Python"
+		set[0].Tag = 109
+		cnt, err := db.Tb(t_book).Update(set[0]).Done()
+		if err != nil {
+			t.Errorf("got err:%v", err)
+		}
+		if cnt != 1 {
+			t.Errorf("expect update 1 row, got :%d", cnt)
+		}
+
+		var b tBook
+		err = db.Tb(t_book).Select().Where("name = ?", "Python").Get(&b)
+		if err != nil {
+			t.Errorf("got err:%v", err)
+		}
+		if b.Name != "Python" || b.Tag != 109 {
+			t.Error("fail to update a book")
+		}
+	})
+}
+
+func TestSelect_All_join(t *testing.T) {
+	RunWithScheme(test_scheme, t, func(sb *sqlx.DB, t *testing.T){
+		db := NewDB(sb)
+		type Book struct {
+			M
+			id int64
+			Name string `db:"name"`
+			Tag int `db:"tag"`
+			AuthorID int `db:"author_id"`
+		}
+		type Author struct {
+			M
+			ID int64
+			Name string `db:"name"`
+			Age int `db:"age"`
+		}
+		book_set := []*Book{
+			&Book{Name:"Python", Tag:99, AuthorID:1},
+			&Book{Name:"Golang", Tag:99, AuthorID:2},
+			&Book{Name:"Tencent", Tag:88, AuthorID:1},
+		}
+		author_set := []*Author {
+			&Author{Name:"Tom", Age:28},
+		}
+		for _, book:=range book_set {
+			_, err := db.Tb(t_book).Insert(book).Done()
+			if err != nil {
+				t.Errorf("fail to insert books, err:%v", err)
+			}
+		}
+		for _, author := range author_set {
+			_, err := db.Tb(t_author).Insert(author).Done()
+			if err != nil {
+				t.Errorf("fail to insert authors, err:%v", err)
+			}
+		}
+		var books []Book
+		// scan from given columns
+		err := db.Tb(t_book, "b").
+			LJ(t_author, "a.id", "b.author_id", "a").
+			Select(
+			"b.tag", "b.name").
+			Where("a.Age = ?", 28).
+			OrderDesc("b.name").
+			All(&books)
+		if err != nil {
+			t.Errorf("fail to query all, err:%v", err)
+		}
+		if len(books) != 2 {
+			t.Errorf("expect 2, got:%d", len(books))
+		}
+		if books[1].Name != "Python" {
+			t.Errorf("expect got Python, got:%s", books[0].Name)
+		}
+		if books[0].Tag != 88 {
+			t.Errorf("expect tag value 88, but got :%d", books[0].Tag)
 		}
 	})
 }

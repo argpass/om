@@ -60,7 +60,7 @@ type Select struct {
 func parseINSpec(pquery *string, pargs *[]interface{}) error {
 	query := *pquery
 	// check if has `IN` spec
-	if !strings.Contains(strings.ToUpper(query), "IN") {
+	if !strings.Contains(strings.ToUpper(query), " IN ") {
 		return nil
 	}
 	queryS := strings.Split(query, "?")
@@ -558,7 +558,7 @@ func (t *Tables) update(colsMap map[string]interface{},
 			args = append(args, arg)
 		}
 	}
-	sql := fmt.Sprintf("UPDATE %s SET (%s) %s", t.name, cols, whereSql)
+	sql := fmt.Sprintf("UPDATE %s SET %s %s", t.name, strings.Join(cols, ","), whereSql)
 	result, err := t.db.dbx.Exec(sql, args...)
 	if err != nil {
 		return 0, err
