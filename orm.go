@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"fmt"
 	"database/sql"
+	"github.com/Sirupsen/logrus"
 )
 
 const (
@@ -206,8 +207,14 @@ func (qr *queryResult)Get(m isModel) error  {
 	return qr.err
 }
 
+type SQLLogger interface {
+	Debug(spec string, query string, args []interface{})
+	Error(spec string, err error, query string, args []interface{})
+}
+
 type wrappedDB struct {
-	DB *sqlx.DB
+	DB     *sqlx.DB
+	logger SQLLogger
 }
 
 //func (w *wrappedDB) Query(query string, args...interface{}) (*sql.Rows, error) {
@@ -219,48 +226,75 @@ type wrappedDB struct {
 //	return w.DB.Query(query, args...)
 //}
 
-func (w *wrappedDB) Queryx(query string, args...interface{}) (*sqlx.Rows, error) {
-	err := parseINSpec(&query, &args)
+func (w *wrappedDB) Queryx(query string, args...interface{}) (rows *sqlx.Rows, err error) {
+	err = parseINSpec(&query, &args)
 	if err != nil {
 		return nil, err
 	}
-	fmt.Printf("[Queryx]%s, --args:%+v\n",query, args)
-	return w.DB.Queryx(query, args...)
+	w.logger.Debug("[Queryx]", query, args)
+	rows, err = w.DB.Queryx(query, args...)
+	if err != nil {
+		w.logger.Error("[Queryx]", err, query, args)
+	}
+	return rows, err
 }
 
-func (w *wrappedDB) Get(dest interface{}, query string, args ...interface{}) error {
-	err := parseINSpec(&query, &args)
+func (w *wrappedDB) Get(dest interface{}, query string, args ...interface{}) (err error) {
+	err = parseINSpec(&query, &args)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("[Get]%s, --args:%+v\n",query, args)
-	return w.DB.Get(dest, query, args...)
+	w.logger.Debug("[Get]", query, args)
+	err = w.DB.Get(dest, query, args...)
+	if err != nil {
+		w.logger.Error("[Get]", err, query, args)
+	}
+	return err
 }
 
-func (w *wrappedDB) Select(dest interface{}, query string, args ...interface{}) error {
-	err := parseINSpec(&query, &args)
+func (w *wrappedDB) Select(dest interface{}, query string, args ...interface{}) (err error) {
+	err = parseINSpec(&query, &args)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("[Select]%s, --args:%+v\n",query, args)
-	return w.DB.Select(dest, query, args...)
+	w.logger.Debug("[Select]", query, args)
+	err =  w.DB.Select(dest, query, args...)
+	if err != nil {
+		w.logger.Error("[Select]", err, query, args)
+	}
+	return err
 }
 
-func (w *wrappedDB) Exec(query string, args...interface{}) (sql.Result, error) {
-	err := parseINSpec(&query, &args)
+func (w *wrappedDB) Exec(query string, args...interface{}) (re sql.Result, err error) {
+	err = parseINSpec(&query, &args)
 	if err != nil {
 		return nil, err
 	}
-	fmt.Printf("[Exec]%s, --args:%+v\n",query, args)
-	return w.DB.Exec(query, args...)
+	w.logger.Debug("[Exec]", query, args)
+	re, err = w.DB.Exec(query, args...)
+	if err != nil {
+		w.logger.Error("[Exec]", err, query, args)
+	}
+	return re, err
 }
 
 type DB struct {
 	dbx *wrappedDB
 }
 
-func NewDB(db *sqlx.DB) *DB {
-	w := &wrappedDB{db}
+type sqlLogger struct {
+	logger *logrus.Entry
+}
+
+func (log *sqlLogger) Debug(spec string, query string, args []interface{})  {
+}
+
+func (log *sqlLogger) Error(spec string, query string, args []interface{})  {
+}
+
+// todo: resove SQLLogger inner
+func NewDB(db *sqlx.DB, logger *logrus.Entry) *DB {
+	w := &wrappedDB{DB:db, logger:logger}
 	return &DB{w}
 }
 
